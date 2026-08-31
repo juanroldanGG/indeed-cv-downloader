@@ -152,7 +152,7 @@ async function runAllJobs(tabId, folders, ledger) {
 
   const candidates = jobs.reduce((n, j) => n + (j.candidates || 0), 0);
   const ok = await ask(tabId,
-    `Indeed CV Downloader 3.0\n\n${jobs.length} jobs, ${candidates} candidates total.\n` +
+    `${appName()}\n\n${jobs.length} jobs, ${candidates} candidates total.\n` +
     `Already downloaded by the team: ${ledger.keys.size} (skipped)\n` +
     `Known to have no resume: ${Object.keys(ledger.noResume).length} (skipped)\n` +
     `Jobs unchanged since last run: ${jobs.filter(unchanged).length} of ${jobs.length} (skipped entirely)\n` +
@@ -235,6 +235,13 @@ const capped = (lines, max = 8) => lines.length <= max
   ? lines
   : lines.slice(0, max).concat(`+${lines.length - max} more`);
 
+// Read the name and version off the manifest so a release bump can never leave a
+// stale number in a popup.
+const appName = () => {
+  const m = chrome.runtime.getManifest();
+  return `${m.name} ${m.version}`;
+};
+
 const jobsPhrase = n => `${n} job${n === 1 ? "" : "s"}`;
 const cvsPhrase = n => `${n} new CV${n === 1 ? "" : "s"}`;
 const peoplePhrase = n => `${n} ${n === 1 ? "person" : "people"}`;
@@ -246,7 +253,7 @@ async function runOneJob(tabId, folders, ledger) {
   const folderId = roleId ? await getOrCreateChild(roleId, SOURCE_SUBFOLDER) : null;
 
   const ok = await ask(tabId,
-    `Indeed CV Downloader 3.0\n\n${folderId ? `Uploading new resumes to:\n  ${title}/Indeed/ (Drive)` : `No Drive folder matched "${title}" — new resumes will save to Downloads instead.`}\n\n` +
+    `${appName()}\n\n${folderId ? `Uploading new resumes to:\n  ${title}/Indeed/ (Drive)` : `No Drive folder matched "${title}" — new resumes will save to Downloads instead.`}\n\n` +
     `Already downloaded by the team: ${ledger.keys.size} (skipped)\n` +
     `Known to have no resume: ${Object.keys(ledger.noResume).length} (skipped)\n\nStart?`);
   if (!ok) return;

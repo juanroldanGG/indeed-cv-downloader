@@ -42,7 +42,8 @@ const chrome = {
   },
   runtime: {
     onInstalled: { addListener: () => {} },
-    getPlatformInfo: cb => cb({})
+    getPlatformInfo: cb => cb({}),
+    getManifest: () => require("./manifest.json")
   },
   contextMenus: {
     create: () => {},
