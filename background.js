@@ -33,7 +33,8 @@ const CV_FOLDER_ID = "1RbBTJlBdS5TTRFgXic8XZImlu9tl9qHj";
 // Verified against the live CV Folder on 2026-08-18.
 const ALIASES = {
   "NetSuite Administrator": "Netsuite Admin",
-  "UX/UI Designer": "UI/UX Designer"
+  "UX/UI Designer": "UI/UX Designer",
+  "Customer Success Specialist": "Customer Success Manager"
 };
 
 // Files go into <role>/Indeed/, not <role>/ — mirrors LinkedIn's <role>/LinkedIn/.
@@ -217,7 +218,7 @@ async function runAllJobs(tabId, folders, ledger) {
   const noResume = Object.keys(ledger.noResume).length;
   await say(tabId,
     `Done — ${cvsPhrase(toDrive)} saved to Drive.` +
-    (toDownloads ? `\n${toDownloads} went to Downloads instead.` : "") +
+    (toDownloads ? `\n${toDownloads} went to the Downloads folder instead.` : "") +
     (saved.length ? `\n\n${capped(saved).join("\n")}` : "") +
     (untouched.length ? `\n\n${jobsPhrase(untouched.length)} had no new applicants.` : "") +
     (unmatched.length
@@ -271,7 +272,7 @@ async function runOneJob(tabId, folders, ledger) {
   if (r.retired.length) console.log("Retired as no resume:", r.retired.join(", "));
   await say(tabId,
     `Done — ${cvsPhrase(r.uploaded)} saved to Drive.` +
-    (r.savedLocal ? `\n${r.savedLocal} went to Downloads instead.` : "") +
+    (r.savedLocal ? `\n${r.savedLocal} went to the Downloads folder instead.` : "") +
     (r.missed.length ? `\n\n${peoplePhrase(r.missed.length)} had no resume.` : "") +
     (r.retired.length ? `\n\n${peoplePhrase(r.retired.length)} never had a resume and won't be opened again.` : "") +
     (folderId ? "" : `\n\nNo Drive folder matched "${title}" — add it to ALIASES in background.js.`));

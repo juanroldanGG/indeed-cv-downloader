@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Indeed CV Downloader",
-  "version": "3.3",
+  "version": "3.4",
   "description": "Downloads Indeed resumes into Google Drive, sharing one team-wide record of who has already been downloaded.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1TwaXHp3h/kvEtVswEJmJU9S7wNgZsb0H82PcGLzOd7A9uiaEqNdyHQSw6G4DHbGlwuAk6l9sfWfPvSo7nxGiMy8PO/YB2zVCBf3P+z1LMPm5YZ1Ij3OE45BTANQwCIY5/F8C71yeBzFTCG5wh422FCVfg7iLM/3oLc2mMu1pH9EQXnGavjlz0+Q5b5YzXDXsO6JZLMKxC/GcI8/bOPR1AIjftWhiPlF3TxroMCBAeIXsy7vBgIB9VkF3own8qgKzFZByPgU2jUpNxCrUsotQmWzMs81pvslq/Jn61ufoBmBQofgVd25CLYkMXwfHbwjeqQQTDbaWDel7uAMpFnpOwIDAQAB",
   "action": {
