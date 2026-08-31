@@ -150,14 +150,17 @@ async function runAllJobs(tabId, folders, ledger) {
   // Declared here, above the confirm dialog that reads it.
   const unchanged = j => j.candidates > 0 && ledger.jobCounts[j.jobId] === j.candidates;
 
+  // The start popup is subject to the same fixed alert height as the finish one,
+  // so the counts that only matter for diagnosis go to the console instead.
   const candidates = jobs.reduce((n, j) => n + (j.candidates || 0), 0);
+  const toVisit = jobs.length - jobs.filter(unchanged).length;
+  console.log(`${jobs.length} jobs, ${candidates} candidates, ${folders.size} Drive folders; ` +
+    `${ledger.keys.size} already downloaded, ${Object.keys(ledger.noResume).length} known to have no resume`);
   const ok = await ask(tabId,
-    `${appName()}\n\n${jobs.length} jobs, ${candidates} candidates total.\n` +
-    `Already downloaded by the team: ${ledger.keys.size} (skipped)\n` +
-    `Known to have no resume: ${Object.keys(ledger.noResume).length} (skipped)\n` +
-    `Jobs unchanged since last run: ${jobs.filter(unchanged).length} of ${jobs.length} (skipped entirely)\n` +
-    `Drive folders found: ${folders.size}\n\n` +
-    `This drives the browser tab for a while — leave it alone until the finish popup.\n\nStart?`);
+    `${appName()}\n\n` +
+    `${toVisit} of ${jobsPhrase(jobs.length)} ${toVisit === 1 ? "has" : "have"} new applicants.\n` +
+    `Everyone already downloaded will be skipped.\n\n` +
+    `Leave this tab alone until the finish popup.\n\nStart?`);
   if (!ok) return;
 
   // Two records per run: `detail` is everything, for the console; `saved` is the
@@ -252,10 +255,14 @@ async function runOneJob(tabId, folders, ledger) {
   const roleId = resolveFolder(title, folders);
   const folderId = roleId ? await getOrCreateChild(roleId, SOURCE_SUBFOLDER) : null;
 
+  console.log(`${ledger.keys.size} already downloaded, ` +
+    `${Object.keys(ledger.noResume).length} known to have no resume`);
   const ok = await ask(tabId,
-    `${appName()}\n\n${folderId ? `Uploading new resumes to:\n  ${title}/Indeed/ (Drive)` : `No Drive folder matched "${title}" — new resumes will save to Downloads instead.`}\n\n` +
-    `Already downloaded by the team: ${ledger.keys.size} (skipped)\n` +
-    `Known to have no resume: ${Object.keys(ledger.noResume).length} (skipped)\n\nStart?`);
+    `${appName()}\n\n` +
+    (folderId
+      ? `New resumes go to ${title}/Indeed/ in Drive.`
+      : `No Drive folder matched "${title}" — new resumes will save to Downloads instead.`) +
+    `\nEveryone already downloaded will be skipped.\n\nStart?`);
   if (!ok) return;
 
   const r = await walkJobCandidates(tabId, folderId, title, ledger);
