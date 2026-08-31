@@ -160,11 +160,18 @@ async function runAllJobs(tabId, folders, ledger) {
     `This drives the browser tab for a while — leave it alone until the finish popup.\n\nStart?`);
   if (!ok) return;
 
-  const report = [];
+  // Two records per run: `detail` is everything, for the console; `saved` is the
+  // short list the finish popup shows. Chrome's alert() has a fixed height and
+  // clips silently, so the popup has to stay a fixed small size no matter how
+  // many roles the run covered.
+  const detail = [];
+  const saved = [];
   const unmatched = [];
   const retired = [];
   const untouched = [];
   const badSort = [];
+  let toDrive = 0;
+  let toDownloads = 0;
 
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i];
@@ -183,7 +190,10 @@ async function runAllJobs(tabId, folders, ledger) {
     const r = await walkJobCandidates(tabId, folderId, job.title, ledger, job.jobId);
     retired.push(...r.retired.map(n => `${n} (${job.title})`));
     if (!r.sortOk && r.total > 0) badSort.push(job.title);
-    report.push(`${job.title}: ${r.uploaded} to Drive` +
+    toDrive += r.uploaded;
+    toDownloads += r.savedLocal;
+    if (r.uploaded + r.savedLocal > 0) saved.push(`${job.title}: ${r.uploaded + r.savedLocal}`);
+    detail.push(`${job.title}: ${r.uploaded} to Drive` +
       (r.savedLocal ? `, ${r.savedLocal} to Downloads` : "") +
       (r.missed.length ? `, ${r.missed.length} no resume` : "") +
       (r.stoppedEarly ? ` [read ${r.total}, stopped — rest already had]` : ""));
@@ -198,23 +208,36 @@ async function runAllJobs(tabId, folders, ledger) {
   }
 
   await writeNoResumeList(ledger);
+  console.log("Run detail:\n" + detail.join("\n"));
+  if (retired.length) console.log("Retired as no resume:\n  " + retired.join("\n  "));
+
+  const noResume = Object.keys(ledger.noResume).length;
   await say(tabId,
-    `Indeed CV Downloader 3.0 complete!\n\n` +
-    (untouched.length ? `Skipped ${untouched.length} job(s) with no new applicants.\n\n` : "") +
-    `${report.join("\n")}\n\n` +
+    `Done — ${cvsPhrase(toDrive)} saved to Drive.` +
+    (toDownloads ? `\n${toDownloads} went to Downloads instead.` : "") +
+    (saved.length ? `\n\n${capped(saved).join("\n")}` : "") +
+    (untouched.length ? `\n\n${jobsPhrase(untouched.length)} had no new applicants.` : "") +
     (unmatched.length
-      ? `No Drive folder matched: ${unmatched.join(", ")}\nThose went to Downloads. Add them to ALIASES in background.js.\n\n`
+      ? `\n\nNo Drive folder for ${jobsPhrase(unmatched.length)} — those went to Downloads. ` +
+        `Add ${capped(unmatched, 3).join(", ")} to ALIASES in background.js.`
       : "") +
-    (retired.length
-      ? `Retired as "no resume" after ${NO_RESUME_STRIKES} tries (never opened again):\n  ${retired.join("\n  ")}\n\n`
-      : "") +
+    (retired.length ? `\n\n${peoplePhrase(retired.length)} never had a resume and won't be opened again.` : "") +
     (badSort.length
-      ? `Slow run: ${badSort.length} job(s) were not sorted by "Apply date (newest first)", ` +
-        `so every candidate had to be read. Set that sort on the candidate list to make runs much faster.\n\n`
+      ? `\n\nTip: sort ${jobsPhrase(badSort.length)} by "Apply date (newest first)" to make runs much faster.`
       : "") +
-    `Remembered ${ledger.keys.size} downloaded and ${Object.keys(ledger.noResume).length} with no resume.\n` +
-    `Those are listed in ${NO_RESUME_FILE} in the CV folder, with a link to each one.`);
+    (noResume ? `\n\n${peoplePhrase(noResume)} have no resume — see ${NO_RESUME_FILE} in the CV folder.` : ""));
 }
+
+// The popup has to fit in Chrome's alert box whether the run covered one role or
+// thirty, so the job list is capped and the rest is a count. Full detail is in
+// the service worker console.
+const capped = (lines, max = 8) => lines.length <= max
+  ? lines
+  : lines.slice(0, max).concat(`+${lines.length - max} more`);
+
+const jobsPhrase = n => `${n} job${n === 1 ? "" : "s"}`;
+const cvsPhrase = n => `${n} new CV${n === 1 ? "" : "s"}`;
+const peoplePhrase = n => `${n} ${n === 1 ? "person" : "people"}`;
 
 // Clicked while already on a candidate list: just do that one job.
 async function runOneJob(tabId, folders, ledger) {
@@ -230,11 +253,13 @@ async function runOneJob(tabId, folders, ledger) {
 
   const r = await walkJobCandidates(tabId, folderId, title, ledger);
   await writeNoResumeList(ledger);
+  if (r.missed.length) console.log("No resume found for:", r.missed.join(", "));
+  if (r.retired.length) console.log("Retired as no resume:", r.retired.join(", "));
   await say(tabId,
-    `Done.\n\nUploaded to Drive: ${r.uploaded}` +
-    (r.savedLocal ? `\nSaved to Downloads: ${r.savedLocal}` : "") +
-    (r.missed.length ? `\n\nNo resume found for: ${r.missed.join(", ")}` : "") +
-    (r.retired.length ? `\n\nRetired as "no resume" (never opened again): ${r.retired.join(", ")}` : "") +
+    `Done — ${cvsPhrase(r.uploaded)} saved to Drive.` +
+    (r.savedLocal ? `\n${r.savedLocal} went to Downloads instead.` : "") +
+    (r.missed.length ? `\n\n${peoplePhrase(r.missed.length)} had no resume.` : "") +
+    (r.retired.length ? `\n\n${peoplePhrase(r.retired.length)} never had a resume and won't be opened again.` : "") +
     (folderId ? "" : `\n\nNo Drive folder matched "${title}" — add it to ALIASES in background.js.`));
 }
 

@@ -143,13 +143,14 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
 
   await state.clickHandler({ id: 1, url: "https://employers.indeed.com/jobs" });
 
-  const finish = state.alerts.find(a => a.includes("complete!")) || "";
+  const finish = state.alerts.find(a => a.startsWith("Done —")) || "";
   assert.ok(finish, "run never reached the finish popup:\n" + state.alerts.join("\n---\n"));
 
   // 1. the quiet job was never opened
   assert.ok(!state.navigated.some(u => u.includes("job-quiet")),
     "skipped job should never be navigated to");
-  assert.ok(finish.includes("Skipped 1 job"), "finish popup should report the skip:\n" + finish);
+  assert.ok(finish.includes("1 job had no new applicants"),
+    "finish popup should report the skip:\n" + finish);
   console.log("ok    job with an unchanged count is skipped entirely");
 
   // 2. the already-downloaded candidate was not re-opened
