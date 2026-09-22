@@ -49,7 +49,15 @@ const chrome = {
     create: () => {},
     onClicked: { addListener: () => {} }
   },
-  storage: { local: { get: async () => ({ doneKeys: [] }), remove: async () => {}, set: async () => {} } },
+  storage: {
+    local: {
+      // doneKeys stays empty (the Drive ledger is the record under test);
+      // laptopKeys is kept, because remembering them between runs is the point.
+      get: async () => ({ doneKeys: [], laptopKeys: state.laptopKeys || [] }),
+      remove: async () => {},
+      set: async o => { if (o.laptopKeys) state.laptopKeys = o.laptopKeys; }
+    }
+  },
   identity: {
     getAuthToken: (opts, cb) => cb("fake-token"),
     removeCachedAuthToken: (o, cb) => cb()
@@ -72,7 +80,7 @@ const chrome = {
     executeScript: async ({ func, args = [] }) => {
       const name = func.name;
       if (name === "collectJobs") return [{ result: JOBS }];
-      if (name === "collectCandidates") { state.knownIdsSeen = args[0] || []; return [{ result: { list: CANDIDATES, stoppedEarly: false, sortOk: true } }]; }
+      if (name === "collectCandidates") { state.knownIdsSeen = args[0] || []; return [{ result: { list: state.candidateList || CANDIDATES, stoppedEarly: false, sortOk: true } }]; }
       if (name === "readJobTitle") return [{ result: "Sales Account Manager" }];
       if (name === "waitAndCaptureResume") {
         // "No Resume Person" never yields a PDF, everyone else does.
@@ -131,6 +139,103 @@ global.fetch = async (url, opts = {}) => {
   return ok({});
 };
 
+// --- which folder a job lands in --------------------------------------------
+// The same table as the LinkedIn downloader's smoke.js, plus Indeed's own titles.
+// Checked against the real role folders in Drive on 2026-09-21, hard ones
+// included: a typo'd folder, old "CVs ..." duplicates of current roles, and
+// two roles that share two of their three words. A wrong folder is worse than
+// none, so every "none" below matters as much as every match.
+{
+  const { resolveFolder } = new Function("chrome", "fetch", "alert", "confirm",
+    src + "\nreturn { resolveFolder };")(chrome, global.fetch, global.alert, global.confirm);
+  const folders = [
+    "CVs Netsuite System Administrator", "CVs IT Support Specialist Tier 2",
+    "CVs Sr Full Stack Engineer 20260223", "CVs Soft Dev Eng in Test", "CVs Sales Account Manager",
+    "CVs Marketing Operations Manager v2.0",
+    "CVs Weshape_Closer_Growth Account Executive (High-Ticket Closer)", "CVs Recruiter",
+    "CVs Technical Product Manager", "CVs Product Manager", "CVs Project Manager",
+    "CVs Salesforce Admin Tier 3", "CVs Marketing Operations Manager", "CVs Sr Full Stack Engineer",
+    "CVs Platform Engineer", "CVs Woocommerce Wordpress", "Web Operation Specialist",
+    "Sales Develpment Representative.", "Sales Operations Specialist", "test role",
+    "Account Executive / Account Manager", "UI/UX Designer", "SDR - HRS",
+    "Talent Acquisition Specialist", "HR Assistant", "SDET", "Project Coordinator",
+    "Sales Account Manager", "Customer Success Manager", "Netsuite Admin", "IT Support Specialist",
+    "CVs Accounts Payable Specialist", "CVs Customer Success Manager", "CVs Graphic Designer",
+    "CVs Closer - Sales", "CVs HR Assistant/Virtual Assistant"
+  ].map(name => [name, name]);
+  const asTheExtensionHasThem = new Map(folders);   // what run() really passes in
+
+  const cases = [
+    ["NetSuite Administrator", "Netsuite Admin"],                     // Indeed titles from SETUP.md
+    ["UX/UI Designer", "UI/UX Designer"],
+    ["Project Coordinator", "Project Coordinator"],
+    ["Talent Acquisition Specialist", "Talent Acquisition Specialist"],
+    ["Web Operations Specialist", "Web Operation Specialist"],          // plural
+    ["Sales Development Representative", "Sales Develpment Representative."], // typo + full stop
+    ["Custmer Success Manager", "Customer Success Manager"],          // a slipped letter
+    ["Project Cordinator", "Project Coordinator"],
+    ["Specialist, IT Support", "IT Support Specialist"],              // word order
+    ["IT Support Specialists", "IT Support Specialist"],
+    ["Sales Operation Specialist", "Sales Operations Specialist"],
+    ["Customer Success Manager", "Customer Success Manager"],         // not the old "CVs" copy
+    ["Sales Account Manager", "Sales Account Manager"],
+    ["HR Assistant", "HR Assistant"],
+    ["Netsuite Administrator", "Netsuite Admin"],                     // abbreviation
+    ["Sales Development Rep", "Sales Develpment Representative."],
+    ["Customer Success Mgr", "Customer Success Manager"],
+    ["UX Designer", "UI/UX Designer"],                                // alias table
+    ["Software Engineer in Test", "SDET"],
+    ["Customer Success Specialist", "Customer Success Manager"],
+    ["TI Support Specialist", "IT Support Specialist"],               // Spanish/Portuguese IT
+    ["RH Assistant", "HR Assistant"],                                 // and HR
+    ["Human Resources Assistant", "HR Assistant"],
+    ["Sales Ops Specialist", "Sales Operations Specialist"],
+    ["Web Ops Specialist", "Web Operation Specialist"],
+    ["SDR", "Sales Develpment Representative."],
+    ["Sales Development Representative (SDR)", "Sales Develpment Representative."], // acronym repeated
+    ["Sales Development Representative(s)", "Sales Develpment Representative."],
+    ["Sales Development Representative - HRS", "SDR - HRS"],          // the client's own SDR role
+    ["Customer Success Manager - Remote, LATAM", "Customer Success Manager"],
+    ["Software Development Engineer in Test", "SDET"],
+    ["Costumer Success Manager", "Customer Success Manager"],
+    ["IT Support Specialist I", "IT Support Specialist"],
+    // Each of these once landed in the wrong folder when attacked. They stay none.
+    ["Customer Success Manager - CVS", null],          // a client called CVS, not the old "CVs" folder
+    ["Recruiter - CVS", null],
+    ["SDR - HR", null],                                // HRS is a client, not the plural of HR
+    ["Sales - Managed Accounts", null],                // managed is not a typo of manager
+    ["Product Coordinator", null],                     // two letters from Project
+    ["IT Support Specialist 2", null],
+    ["Sales Operations Manager", null],
+    ["Operations Specialist", null],                   // Web or Sales? Not guessing.
+    ["Marketing Operations Specialist", null],         // shares two of three words with Sales Ops
+    ["Web Specialist", null],
+    ["PR Assistant", null],                            // one letter from HR — a different job
+    ["Sales Manager", null],
+    ["Account Manager", null],
+    ["IT Support Specialist Tier 2", null],            // a different role from Tier 1
+    ["Senior Customer Success Manager", null],         // seniority is part of the role
+    ["Customer Success Manager Assistant", null],
+    ["Graphic Designer", null]                         // only an old pre-GroundControl folder
+  ];
+  for (const [title, want] of cases) {
+    assert.strictEqual(resolveFolder(title, asTheExtensionHasThem), want,
+      `"${title}" should go to ${want ? `"${want}"` : "no folder"}`);
+  }
+  // Two folders that fit equally well: pick neither.
+  assert.strictEqual(resolveFolder("Customer Success Manager",
+    new Map([["Customer Success Manager", "a"], ["Customer Success Managers", "b"]])), null,
+    "two folders that are the same name: no guess");
+  assert.strictEqual(resolveFolder("Project Coordinatr",
+    new Map([["Project Coordinator", "a"], ["Project Coordinater", "b"]])), null,
+    "a title one letter from two folders: no guess");
+  assert.strictEqual(resolveFolder("Diseñador Gráfico", new Map([["Disenador Grafico", "a"]])), "a",
+    "accents don't count");
+  assert.strictEqual(resolveFolder("CEO Assistant", new Map([["SEO Assistant", "a"]])), null,
+    "no typo allowance in short words: CEO and SEO are different jobs");
+  console.log(`ok    job titles find their own folder and never someone else's (${cases.length} cases)`);
+}
+
 // --- load and run -----------------------------------------------------------
 new Function("chrome", "fetch", "alert", "confirm", src)(chrome, global.fetch, global.alert, global.confirm);
 
@@ -181,6 +286,44 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   assert.ok(csv !== undefined, "no-resume CSV should be written");
   assert.ok(csv.includes("Name,Job,First seen"), "CSV needs its header");
   console.log("ok    the no-CV worklist is written to Drive");
+
+  // 7. a job with no Drive folder. Its CVs go to this computer's Downloads and
+  // the popup opens with a warning in capitals. What they no longer are is
+  // marked done — that stranded CVs on a laptop where no later run would ever
+  // send them on. The first run after the folder exists uploads them; the runs
+  // before it don't download them again.
+  const ledgerNow = () => JSON.parse(state.driveFiles["_cv-downloader-ledger-indeed.json"]);
+  const sweep = async () => {
+    state.alerts = []; state.navigated = [];
+    await state.clickHandler({ id: 1, url: "https://employers.indeed.com/jobs" });
+    return state.alerts.find(a => a.includes("Done —")) || "";
+  };
+  state.candidateList = [{ id: "lap1", name: "Laptop Person", href: "https://employers.indeed.com/candidates/view?id=lap1" }];
+  JOBS.length = 0;
+  JOBS.push({ jobId: "job-nofolder", title: "Graphic Designer", candidates: 1 });
+  const downloadsBefore = state.downloads.length, uploadsBefore = state.uploaded.length;
+
+  const noFolder = await sweep();
+  assert.ok(noFolder.startsWith("⚠️ NO DRIVE FOLDER FOR GRAPHIC DESIGNER — CVS SAVED TO DOWNLOADS"),
+    "the popup opens with the warning, in capitals:\n" + noFolder);
+  assert.deepStrictEqual(state.downloads.slice(downloadsBefore), ["Graphic Designer/Laptop Person.pdf"],
+    "its CV is saved to this computer");
+  assert.strictEqual(state.uploaded.length, uploadsBefore, "not to Drive — there's no folder to put it in");
+  assert.ok(!ledgerNow().keys.includes("lap1"), "the CV is not marked done");
+  assert.strictEqual(ledgerNow().jobCounts["job-nofolder"], undefined, "nor is the job");
+
+  await sweep();   // still no folder
+  assert.ok(!state.navigated.some(u => u.includes("id=lap1")), "the laptop copy isn't opened again");
+  assert.ok(state.knownIdsSeen.includes("lap1"), "the scan counts it as dealt with");
+  assert.strictEqual(state.downloads.length, downloadsBefore + 1, "and it isn't downloaded twice");
+
+  JOBS[0].title = "Project Coordinator";   // the folder "appears"
+  const uploadsBeforeFolder = state.uploaded.length;
+  await sweep();
+  assert.ok(state.navigated.some(u => u.includes("id=lap1")), "with a folder, the laptop copy is opened again");
+  assert.ok(state.uploaded.length > uploadsBeforeFolder, "so it reaches Drive");
+  assert.ok(ledgerNow().keys.includes("lap1"), "and only then is it marked done");
+  console.log("ok    no folder: saved to this computer, warned first, sent to Drive once the folder exists");
 
   console.log("\nsmoke test passed — a full sweep runs end to end");
 })().catch(err => {

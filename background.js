@@ -28,12 +28,16 @@
 // LinkedIn downloader uses.
 const CV_FOLDER_ID = "1RbBTJlBdS5TTRFgXic8XZImlu9tl9qHj";
 
-// Indeed job title -> Drive folder name, for the ones that don't match by name.
-// Comparison ignores case, spaces and punctuation.
-// Verified against the live CV Folder on 2026-08-18.
+// Job title -> Drive folder name, for true synonyms the matching can't guess
+// (see resolveFolder — plurals, typos, word order and short forms need no entry).
+// Includes the LinkedIn downloader's entries, so a title lands in the same
+// folder whichever board it came from. Verified against the live CV Folder on
+// 2026-09-21.
 const ALIASES = {
   "NetSuite Administrator": "Netsuite Admin",
   "UX/UI Designer": "UI/UX Designer",
+  "UX Designer": "UI/UX Designer",
+  "Software Engineer in Test": "SDET",
   "Customer Success Specialist": "Customer Success Manager"
 };
 
@@ -83,13 +87,18 @@ chrome.action.onClicked.addListener(async (tab) => {
     // Shared record first; the local copy is a fallback for when Drive is
     // unreachable, and seeds the ledger with this machine's history on the
     // first 3.0 run.
-    const { doneKeys = [] } = await chrome.storage.local.get("doneKeys");
+    const { doneKeys = [], laptopKeys = [] } = await chrome.storage.local.get(["doneKeys", "laptopKeys"]);
     const led = await readLedger();
     const ledger = {
       keys: new Set([...led.keys, ...doneKeys]),  // downloaded, never open again
       noResume: { ...led.noResume },              // retired, never open again
       misses: { ...led.misses },                  // id -> strikes so far
-      jobCounts: { ...led.jobCounts }              // jobId -> count at last clean pass
+      jobCounts: { ...led.jobCounts },             // jobId -> count at last clean pass
+      // This computer only, never written to the shared ledger: CVs saved to
+      // its Downloads because their job had no Drive folder. Not "done", so
+      // the first run after the folder exists uploads them; remembered, so the
+      // runs before that don't download the same CVs again.
+      onLaptop: new Set(laptopKeys)
     };
 
     if (onJobsList) await runAllJobs(tab.id, folders, ledger);
@@ -204,8 +213,9 @@ async function runAllJobs(tabId, folders, ledger) {
 
     // Only bank the count on a clean sweep. Anyone still on their first strike
     // needs another look, and skipping this job next time would strand them.
-    // Same if the list never loaded — that is not evidence of anything.
-    if (r.total > 0 && r.missed.length === 0 && r.uploadFailed === 0) {
+    // Same if the list never loaded — that is not evidence of anything. And
+    // never with no folder: its CVs are only on a laptop, so it isn't done.
+    if (r.total > 0 && r.missed.length === 0 && r.uploadFailed === 0 && folderId) {
       ledger.jobCounts[job.jobId] = job.candidates;
       await persistLedger(ledger, true);
     }
@@ -217,14 +227,11 @@ async function runAllJobs(tabId, folders, ledger) {
 
   const noResume = Object.keys(ledger.noResume).length;
   await say(tabId,
+    noFolderWarning(unmatched) +
     `Done — ${cvsPhrase(toDrive)} saved to Drive.` +
     (toDownloads ? `\n${toDownloads} went to the Downloads folder instead.` : "") +
     (saved.length ? `\n\n${capped(saved).join("\n")}` : "") +
     (untouched.length ? `\n\n${jobsPhrase(untouched.length)} had no new applicants.` : "") +
-    (unmatched.length
-      ? `\n\nNo Drive folder for ${jobsPhrase(unmatched.length)} — those went to Downloads. ` +
-        `Add ${capped(unmatched, 3).join(", ")} to ALIASES in background.js.`
-      : "") +
     (retired.length ? `\n\n${peoplePhrase(retired.length)} never had a resume and won't be opened again.` : "") +
     (badSort.length
       ? `\n\nTip: sort ${jobsPhrase(badSort.length)} by "Apply date (newest first)" to make runs much faster.`
@@ -245,6 +252,12 @@ const appName = () => {
   const m = chrome.runtime.getManifest();
   return `${m.name} ${m.version}`;
 };
+
+// First thing on screen, in capitals: the one outcome where CVs are not where
+// GroundControl can see them. Same line as the LinkedIn downloader's.
+const noFolderWarning = titles => titles.length
+  ? `⚠️ NO DRIVE FOLDER FOR ${capped(titles, 3).join(", ").toUpperCase()} — CVS SAVED TO DOWNLOADS\n\n`
+  : "";
 
 const jobsPhrase = n => `${n} job${n === 1 ? "" : "s"}`;
 const cvsPhrase = n => `${n} new CV${n === 1 ? "" : "s"}`;
@@ -271,11 +284,11 @@ async function runOneJob(tabId, folders, ledger) {
   if (r.missed.length) console.log("No resume found for:", r.missed.join(", "));
   if (r.retired.length) console.log("Retired as no resume:", r.retired.join(", "));
   await say(tabId,
+    noFolderWarning(folderId ? [] : [title]) +
     `Done — ${cvsPhrase(r.uploaded)} saved to Drive.` +
     (r.savedLocal ? `\n${r.savedLocal} went to the Downloads folder instead.` : "") +
     (r.missed.length ? `\n\n${peoplePhrase(r.missed.length)} had no resume.` : "") +
-    (r.retired.length ? `\n\n${peoplePhrase(r.retired.length)} never had a resume and won't be opened again.` : "") +
-    (folderId ? "" : `\n\nNo Drive folder matched "${title}" — add it to ALIASES in background.js.`));
+    (r.retired.length ? `\n\n${peoplePhrase(r.retired.length)} never had a resume and won't be opened again.` : ""));
 }
 
 // --- one job's candidate list ------------------------------------------------
@@ -295,7 +308,11 @@ async function walkJobCandidates(tabId, folderId, jobTitle, ledger, jobId) {
 
   // Hand the scan everyone we've already dealt with, so it can stop paging the
   // moment it has passed the new arrivals instead of reading the whole job.
-  const knownIds = [...ledger.keys, ...Object.keys(ledger.noResume)];
+  // With no folder, what's already on this laptop counts as dealt with; with
+  // one, it doesn't — which is what finally gets those CVs into Drive.
+  const alreadyHere = id => !folderId && ledger.onLaptop.has(id);
+  const knownIds = [...ledger.keys, ...Object.keys(ledger.noResume),
+    ...(folderId ? [] : ledger.onLaptop)];
 
   // A banked count is this job's certificate that last time finished clean.
   // Without one — a first run, or a run that left somebody unfinished — the
@@ -313,7 +330,7 @@ async function walkJobCandidates(tabId, folderId, jobTitle, ledger, jobId) {
   // resume. The second half is the whole point of this version: without it, every
   // run re-opened every resume-less candidate and waited 35s on each, which is
   // where the hours went.
-  const todo = all.filter(c => !ledger.keys.has(c.id) && !(c.id in ledger.noResume));
+  const todo = all.filter(c => !ledger.keys.has(c.id) && !(c.id in ledger.noResume) && !alreadyHere(c.id));
 
   for (const c of todo) {
     await goTo(tabId, c.href);
@@ -321,13 +338,12 @@ async function walkJobCandidates(tabId, folderId, jobTitle, ledger, jobId) {
     const capture = await inject(tabId, waitAndCaptureResume, [], "MAIN");
     if (capture && capture.base64) {
       const filename = `${safeName(c.name) || "resume"}.pdf`;
-      const ok = folderId && await uploadBase64ToDrive(capture.base64, filename, folderId);
+      const ok = folderId ? await uploadBase64ToDrive(capture.base64, filename, folderId) : false;
 
       if (ok) {
         uploaded++;
       } else {
-        // Drive unavailable or no matching folder — keep the file rather than
-        // losing it.
+        // No folder, or Drive refused — keep the file on this computer for now.
         chrome.downloads.download({
           url: `data:application/pdf;base64,${capture.base64}`,
           filename: `${safeName(jobTitle)}/${filename}`,
@@ -335,19 +351,21 @@ async function walkJobCandidates(tabId, folderId, jobTitle, ledger, jobId) {
         });
         savedLocal++;
       }
-      // Only remember it when it reached its final home — same rule as the
-      // LinkedIn version. A Drive upload that failed while a folder existed is
-      // worth retrying next run; recording it would strand the CV in
-      // Downloads forever.
-      if (ok || !folderId) {
+      // Only "done" once it's in Drive — same rule as the LinkedIn version.
+      // No-folder CVs used to be recorded too, which stranded them on a laptop
+      // where no later run would ever send them on.
+      if (ok) {
         ledger.keys.add(c.id);
-        delete ledger.misses[c.id]; // succeeded, so any earlier strike is moot
-        await persistLedger(ledger);
-      } else {
-        // Had a folder, but Drive refused. They stay unrecorded and must be
-        // retried, so this job does not get its clean certificate.
+        ledger.onLaptop.delete(c.id);
+      } else if (folderId) {
+        // Had a folder, but Drive refused. Retried next run, so this job does
+        // not get its clean certificate.
         uploadFailed++;
+      } else {
+        ledger.onLaptop.add(c.id);   // sent to Drive by the first run after there's a folder
       }
+      delete ledger.misses[c.id];    // a CV turned up, so any earlier strike is moot
+      await persistLedger(ledger);
     } else {
       missed.push(c.name);
       const strikes = (ledger.misses[c.id] || 0) + 1;
@@ -391,7 +409,7 @@ async function persistLedger(ledger, force) {
   ledger.noResume = merged.noResume;
   ledger.misses = merged.misses;
   ledger.jobCounts = merged.jobCounts;
-  await chrome.storage.local.set({ doneKeys: Array.from(ledger.keys) });
+  await chrome.storage.local.set({ doneKeys: Array.from(ledger.keys), laptopKeys: Array.from(ledger.onLaptop) });
 }
 
 // --- Google Drive -----------------------------------------------------------
@@ -686,14 +704,57 @@ async function uploadBase64ToDrive(base64, filename, folderId) {
   }
 }
 
-// Job title -> Drive folder id. Exact-ish match first, then the alias table.
+// Job title -> Drive folder id, or null when no folder is certainly the one.
+//
+// Roles are named by hand twice, once on the job board and once in
+// GroundControl, and the names drift: LinkedIn's "Web Operations Specialist"
+// against "Web Operation Specialist" sent six CVs to a Downloads folder, and
+// "Sales Develpment Representative." sits in Drive waiting to do the same.
+// Identical to the LinkedIn downloader's copy, on purpose — keep them that
+// way, so a title lands in the same folder whichever board it came from.
+// So, in order:
+//   1. the same words, ignoring case, accents, punctuation, plurals, the
+//      usual short forms (Sr, Ops, HR, SDR, and LATAM's RH and TI), words
+//      repeated in brackets — "Sales Development Representative (SDR)" — and
+//      "Remote"/"LATAM", which never tell two of these roles apart;
+//   2. the alias table, for true synonyms no rule can guess;
+//   3. the same words in any order, allowing one slipped letter in a long word.
+// Never "most of the words": Web Operations and Sales Operations Specialist
+// share two of three, and CVs in the wrong role are worse than CVs in none.
+// When two folders fit equally, it's none — the job is skipped and says so.
+// Every rule here was attacked with titles built to land in the wrong folder;
+// the ones that did are in smoke.js and must stay "none".
 function resolveFolder(jobTitle, folders) {
-  const key = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const byKey = new Map();
-  for (const [name, id] of folders) byKey.set(key(name), id);
+  // Whole words only, so DevOps and Sales stay themselves.
+  const SHORT = {
+    sr: "senior", jr: "junior", mgr: "manager", admin: "administrator", rep: "representative",
+    ops: "operations", hr: "human resources", rh: "human resources",
+    it: "information technology", ti: "information technology",
+    sdr: "sales development representative", csm: "customer success manager",
+    sdet: "software development engineer in test",
+    costumer: "customer"   // how Spanish speakers most often spell it
+  };
+  const NOISE = new Set(["remote", "latam", "hybrid", "onsite"]);
+  const split = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().split(/[^a-z0-9]+/)
+    // A plural s comes off words of four letters or more. Below that it's part
+    // of an acronym and stays: HRS is a client, not two HRs.
+    .map(w => w.length >= 4 ? w.replace(/s$/, "") : w)
+    // Lone letters are "(s)" or a level "I"; numbers stay — Tier 2 is its own role.
+    .filter(w => (w.length > 1 || /\d/.test(w)) && !NOISE.has(w));
+  const words = s => [...new Set(split(s).flatMap(w => SHORT[w] ? split(SHORT[w]) : [w]))];
+  const key = s => words(s).join("");
+
+  // Old "CVs ..." folders predate GroundControl and are never where new CVs go.
+  // Named outright: relying on the "cvs" word to keep them out failed the day
+  // a title named a client called CVS.
+  const current = [...folders].filter(([name]) => !/^\s*cvs\b/i.test(name));   // a Map in the extension
+
+  const byKey = new Map();   // key -> id, or null when two folders share the key
+  for (const [name, id] of current) byKey.set(key(name), byKey.has(key(name)) ? null : id);
 
   const direct = byKey.get(key(jobTitle));
-  if (direct) return direct;
+  if (direct !== undefined) return direct;
 
   for (const [job, folderName] of Object.entries(ALIASES)) {
     if (key(job) === key(jobTitle)) {
@@ -702,7 +763,38 @@ function resolveFolder(jobTitle, folders) {
       console.warn(`Alias "${jobTitle}" -> "${folderName}" but no such Drive folder.`);
     }
   }
-  return null;
+
+  // One letter changed, missing, extra or swapped — only in words of five
+  // letters or more, where one letter can't turn a word into a different one,
+  // and never the last letter, where it can: managed/manager, designed/designer.
+  const oneSlip = (a, b) => {
+    if (a === b) return true;
+    if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    while (a[i] === b[i]) i++;
+    const shorter = Math.min(a.length, b.length);
+    if (a.length === b.length ? i === shorter - 1 : i === shorter) return false;
+    if (a.length > b.length) return a.slice(i + 1) === b.slice(i);
+    if (a.length < b.length) return a.slice(i) === b.slice(i + 1);
+    return a.slice(i + 1) === b.slice(i + 1) ||
+      (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+  };
+  // Every word has a partner on the other side, and there's nothing left over.
+  const sameWords = (a, b) => {
+    if (a.length !== b.length) return false;
+    const unpaired = [...b];
+    for (const w of a) {
+      const i = unpaired.findIndex(v => oneSlip(w, v));
+      if (i < 0) return false;
+      unpaired.splice(i, 1);
+    }
+    return true;
+  };
+
+  const title = words(jobTitle);
+  const fits = current.filter(([name]) => sameWords(title, words(name)));
+  if (fits.length > 1) console.warn(`"${jobTitle}" fits ${fits.map(f => `"${f[0]}"`).join(" and ")} — not guessing.`);
+  return fits.length === 1 ? fits[0][1] : null;
 }
 
 // --- service-worker helpers ------------------------------------------------

@@ -176,8 +176,18 @@ left unfinished by an earlier run is still found.
 
 ## Folder matching
 
-Job titles match Drive folder names ignoring case, spaces and punctuation.
-Checked against the live CV Folder on 2026-08-18:
+`resolveFolder` is the same code as the LinkedIn downloader's, on purpose, so a
+title lands in the same folder whichever board it came from. It ignores case,
+accents, punctuation, plurals, word order, one slipped letter in a long word,
+the usual short forms (Sr, Ops, Mgr, HR, SDR, CSM, and Spanish RH and TI), an
+acronym repeated in brackets, and "Remote"/"LATAM".
+
+It never matches on "most of the words" (Web Operations and Sales Operations
+Specialist share two of three), never picks between two folders that fit
+equally, and never uses the old pre-GroundControl `CVs ...` folders. A wrong
+folder is worse than none: those CVs get scored against the wrong role.
+`smoke.js` checks 50 titles against the live CV Folder (2026-09-21), including
+the ones built to trick it into the wrong folder.
 
 | Indeed job | Drive folder | How |
 |---|---|---|
@@ -185,13 +195,22 @@ Checked against the live CV Folder on 2026-08-18:
 | Customer Success Manager | Customer Success Manager | exact |
 | Project Coordinator | Project Coordinator | exact |
 | Talent Acquisition Specialist | Talent Acquisition Specialist | exact |
-| NetSuite Administrator | Netsuite Admin | alias |
-| UX/UI Designer | UI/UX Designer | alias |
+| NetSuite Administrator | Netsuite Admin | short form |
+| UX/UI Designer | UI/UX Designer | word order |
 
-That covers all 16 live jobs. Files land in `<role>/Indeed/`, created if
-missing. For a new job whose folder name differs, add a line to `ALIASES` at the
-top of `background.js`. If nothing matches, those CVs go to
-`Downloads\<job title>\` rather than being lost, and the summary names the job.
+Files land in `<role>/Indeed/`, created if missing. For a true synonym no rule
+can guess, add a line to `ALIASES` at the top of `background.js`.
+
+**If nothing matches**, the CVs save to `Downloads\<job title>\` on that
+computer and the finish popup opens with
+`⚠️ NO DRIVE FOLDER FOR <JOB> — CVS SAVED TO DOWNLOADS`. They are not recorded
+as done: the first run after GroundControl has the role uploads them to Drive
+by itself. The computer remembers what it already saved, so the runs in between
+don't download them again. If someone drags them into Drive by hand meanwhile,
+GroundControl's MD5 dedup trashes the second copy.
+
+Before 3.5 those CVs were recorded as done, which stranded them on whichever
+laptop ran it.
 
 ## What happens after upload (GroundControl)
 
