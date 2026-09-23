@@ -125,12 +125,15 @@ global.fetch = async (url, opts = {}) => {
       state.uploaded.push("pdf");
       return ok({ id: "new-pdf" });
     }
+    // Decided by the address, as Drive does. Sniffing the body for "name" mistook
+    // a ledger save for a new file the moment the ledger held a retired
+    // candidate — whose entry has a "name" too.
     const body = String(opts.body || "");
-    const nm = body.match(/"name":"([^"]+)"/);
-    if (nm) state.driveFiles[nm[1]] = body.split("\r\n\r\n").pop();
+    const id = url.match(/files\/file-([^?]+)/);
+    if (id) state.driveFiles[id[1]] = body;                   // PATCH: overwrite that file
     else {
-      const id = url.match(/files\/file-([^?]+)/);
-      if (id) state.driveFiles[id[1]] = body;
+      const nm = body.match(/"name":"([^"]+)"/);              // POST: new file, named in its metadata
+      if (nm) state.driveFiles[nm[1]] = body.split("\r\n\r\n").pop();
     }
     if (body.includes("application/pdf")) state.uploaded.push("pdf");
     return ok({ id: "new-file" });
@@ -244,7 +247,10 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
 (async () => {
   // Pre-bank job-quiet at its current count so it must be skipped.
   state.driveFiles["_cv-downloader-ledger-indeed.json"] = JSON.stringify({
-    keys: ["old1"], noResume: {}, misses: {}, jobCounts: { "job-quiet": 169 }
+    keys: ["old1"], misses: {}, jobCounts: { "job-quiet": 169 },
+    // retired on an earlier run, so the popup's count is a total, not this run's
+    noResume: { gone1: { name: "Gone Person", job: "Sales Account Manager",
+      href: "https://employers.indeed.com/candidates/view?id=gone1", at: "2026-08-30T21:04:00.769Z" } }
   });
 
   await state.clickHandler({ id: 1, url: "https://employers.indeed.com/jobs" });
@@ -255,9 +261,13 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   // 1. the quiet job was never opened
   assert.ok(!state.navigated.some(u => u.includes("job-quiet")),
     "skipped job should never be navigated to");
-  assert.ok(finish.includes("1 job had no new applicants"),
+  assert.ok(finish.includes("No new applicants: Project Coordinator."),
     "finish popup should report the skip:\n" + finish);
   console.log("ok    job with an unchanged count is skipped entirely");
+
+  assert.ok(/No resume: 1 applicant in total since [A-Z][a-z]{2} \d{1,2}, none new in this run/.test(finish),
+    "the no-resume line gives the total, since when, and how many are new:\n" + finish);
+  console.log("ok    the no-resume count says it's a running total, and how many this run added");
 
   // 2. the already-downloaded candidate was not re-opened
   assert.ok(!state.navigated.some(u => u.includes("id=old1")),
@@ -286,6 +296,15 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   assert.ok(csv !== undefined, "no-resume CSV should be written");
   assert.ok(csv.includes("Name,Job,First seen"), "CSV needs its header");
   console.log("ok    the no-CV worklist is written to Drive");
+
+  // 6b. the next sweep gives No Resume Person their second strike and retires
+  // them — and the popup counts them as this run's, on top of the total.
+  state.alerts = []; state.navigated = [];
+  await state.clickHandler({ id: 1, url: "https://employers.indeed.com/jobs" });
+  const second = state.alerts.find(a => a.includes("Done —")) || "";
+  assert.ok(/No resume: 2 applicants in total since [A-Z][a-z]{2} \d{1,2}, 1 new in this run/.test(second),
+    "a run that retires someone says so:\n" + second);
+  console.log("ok    a run that retires someone counts them as new in that run");
 
   // 7. a job with no Drive folder. Its CVs go to this computer's Downloads and
   // the popup opens with a warning in capitals. What they no longer are is

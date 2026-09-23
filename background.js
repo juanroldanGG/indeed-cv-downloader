@@ -231,12 +231,11 @@ async function runAllJobs(tabId, folders, ledger) {
     `Done — ${cvsPhrase(toDrive)} saved to Drive.` +
     (toDownloads ? `\n${toDownloads} went to the Downloads folder instead.` : "") +
     (saved.length ? `\n\n${capped(saved).join("\n")}` : "") +
-    (untouched.length ? `\n\n${jobsPhrase(untouched.length)} had no new applicants.` : "") +
-    (retired.length ? `\n\n${peoplePhrase(retired.length)} never had a resume and won't be opened again.` : "") +
+    (untouched.length ? `\n\nNo new applicants: ${capped(untouched, 4).join(", ")}.` : "") +
     (badSort.length
       ? `\n\nTip: sort ${jobsPhrase(badSort.length)} by "Apply date (newest first)" to make runs much faster.`
       : "") +
-    (noResume ? `\n\n${peoplePhrase(noResume)} have no resume — see ${NO_RESUME_FILE} in the CV folder.` : ""));
+    (noResume ? `\n\n${noResumeLine(ledger.noResume, retired.length, NO_RESUME_FILE)}` : ""));
 }
 
 // The popup has to fit in Chrome's alert box whether the run covered one role or
@@ -262,6 +261,21 @@ const noFolderWarning = titles => titles.length
 const jobsPhrase = n => `${n} job${n === 1 ? "" : "s"}`;
 const cvsPhrase = n => `${n} new CV${n === 1 ? "" : "s"}`;
 const peoplePhrase = n => `${n} ${n === 1 ? "person" : "people"}`;
+
+// The no-resume list is everyone ever retired, not this run's — a bare "21
+// people have no resume" under a 20-CV run read as half the run coming up
+// empty. So: the total, since when, and how many this run added. Counted per
+// application, like the list itself. Same line as the LinkedIn downloader's.
+const noResumeLine = (noResume, newThisRun, file) => {
+  const entries = Object.values(noResume);
+  const first = entries.map(e => e.at).filter(Boolean).sort()[0];
+  const since = first
+    ? ` since ${new Date(first).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+    : "";
+  const n = entries.length;
+  return `No resume: ${n} applicant${n === 1 ? "" : "s"} in total${since}, ` +
+    `${newThisRun ? `${newThisRun} new` : "none new"} in this run — see ${file} in the CV folder.`;
+};
 
 // Clicked while already on a candidate list: just do that one job.
 async function runOneJob(tabId, folders, ledger) {
