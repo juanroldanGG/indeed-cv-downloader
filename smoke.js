@@ -79,7 +79,9 @@ const chrome = {
   scripting: {
     executeScript: async ({ func, args = [] }) => {
       const name = func.name;
-      if (name === "collectJobs") return [{ result: JOBS }];
+      if (name === "collectJobs") { state.jobListReads = (state.jobListReads || 0) + 1; return [{ result: JOBS }]; }
+      if (name === "showToast") { (state.toasts = state.toasts || []).push(args[0]); return [{ result: true }]; }
+      if (name === "hideToast") return [{ result: true }];
       if (name === "collectCandidates") { state.knownIdsSeen = args[0] || []; return [{ result: { list: state.candidateList || CANDIDATES, stoppedEarly: false, sortOk: true } }]; }
       if (name === "readJobTitle") return [{ result: "Sales Account Manager" }];
       if (name === "waitAndCaptureResume") {
@@ -239,6 +241,35 @@ global.fetch = async (url, opts = {}) => {
   console.log(`ok    job titles find their own folder and never someone else's (${cases.length} cases)`);
 }
 
+// --- the page world can only see itself ------------------------------------
+// Functions injected into Indeed's page run there, where nothing from this
+// file exists. Naming one of its constants is valid JavaScript that throws only
+// at the other end — on the LinkedIn downloader that cost a whole run, every
+// job "page did not respond". Ported from its smoke.js.
+{
+  const backgroundOnly = (src.match(/^const ([A-Z][A-Z0-9_]+)\s*=/gm) || [])
+    .map(line => line.replace(/^const /, "").replace(/\s*=$/, ""));
+  const injected = ["collectJobs", "collectCandidates", "readJobTitle", "waitAndCaptureResume",
+                    "showToast", "hideToast"];
+  for (const name of injected) {
+    const start = src.search(new RegExp(`^(async )?function ${name}\\(`, "m"));
+    assert.ok(start >= 0, `${name} should exist`);
+    let depth = 0, end = start;
+    for (let i = src.indexOf("{", start); i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) { end = i; break; }
+    }
+    const body = src.slice(start, end)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");     // a comment may name it; only code can throw
+    for (const konst of backgroundOnly) {
+      assert.ok(!new RegExp(`\\b${konst}\\b`).test(body),
+        `${name} runs in Indeed's page and cannot see ${konst} — inline the value instead`);
+    }
+  }
+  console.log("ok    nothing injected into the page reaches for an extension-only name");
+}
+
 // --- load and run -----------------------------------------------------------
 new Function("chrome", "fetch", "alert", "confirm", src)(chrome, global.fetch, global.alert, global.confirm);
 
@@ -363,6 +394,20 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
     "Project Coordinator (Remote, 5 candidates), Project Coordinator (Bogotá, 7 candidates)."),
     "repeated titles carry only what differs:\n" + twins);
   console.log("ok    jobs that share a title are told apart by what differs between them");
+
+  // 9. a click shows something straight away — the first minute of a run can be
+  // spent waiting for Indeed's job list, and a silent minute got the icon
+  // clicked twice — and a second click while a run is going starts nothing.
+  state.toasts = []; state.jobListReads = 0; state.alerts = [];
+  const jobsTab = { id: 1, url: "https://employers.indeed.com/jobs" };
+  await Promise.all([state.clickHandler(jobsTab), state.clickHandler(jobsTab)]);
+  assert.ok((state.toasts[0] || "").includes("reading your job list"),
+    "the first click puts a note on the page at once: " + JSON.stringify(state.toasts));
+  assert.ok(state.toasts.some(t => t.includes("already running")), "the second click says a run is going");
+  assert.strictEqual(state.jobListReads, 1, "and only one run reads the job list");
+  await state.clickHandler(jobsTab);
+  assert.strictEqual(state.jobListReads, 2, "once that run has finished, a click starts one again");
+  console.log("ok    a click shows a note at once, and a second click can't start a second run");
 
   console.log("\nsmoke test passed — a full sweep runs end to end");
 })().catch(err => {

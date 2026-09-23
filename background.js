@@ -64,6 +64,11 @@ const NO_RESUME_FILE = "_no-resume-candidates.csv";
 
 // ===========================================================================
 
+// One run at a time. A second click used to start a second run in the same tab,
+// both paging through the same jobs — and the first minute of a run is silent,
+// which is exactly when a second click happens.
+let running = false;
+
 chrome.action.onClicked.addListener(async (tab) => {
   const onJobsList = tab.url && tab.url.includes("employers.indeed.com/jobs");
   const onCandidates = tab.url && tab.url.includes("employers.indeed.com/candidates");
@@ -71,6 +76,16 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!onJobsList && !onCandidates) {
     return say(tab.id, "Open Indeed for Employers first — the Jobs page to do every job, or a job's candidate list to do just that one.");
   }
+  if (running) {
+    return inject(tab.id, showToast, ["Indeed CV Downloader is already running — leave this tab alone until the finish popup."]);
+  }
+  running = true;
+
+  // Something on screen the moment the icon is clicked: before the Start popup
+  // there can be a minute of waiting for Indeed's job list to draw, and a
+  // silent minute reads as "nothing happened".
+  await inject(tab.id, showToast, ["Indeed CV Downloader is reading your job list — this can take up to a minute. Keep this tab in front."]);
+  chrome.action.setBadgeText({ text: "…" });
 
   // MV3 kills an idle service worker after ~30s; a full sweep runs far longer.
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
@@ -107,8 +122,10 @@ chrome.action.onClicked.addListener(async (tab) => {
     console.error(err);
     await say(tab.id, "Indeed CV Downloader stopped with an error:\n\n" + err.message);
   } finally {
+    running = false;
     clearInterval(keepAlive);
     chrome.action.setBadgeText({ text: "" });
+    await inject(tab.id, hideToast);
   }
 });
 
@@ -860,13 +877,17 @@ async function inject(tabId, func, args = [], world) {
   }
 }
 
-const say = (tabId, msg) => chrome.scripting.executeScript({
-  target: { tabId }, func: m => alert(m), args: [msg]
-}).catch(() => {});
+const say = async (tabId, msg) => {
+  await inject(tabId, hideToast);   // the popup replaces the "working" note
+  return chrome.scripting.executeScript({
+    target: { tabId }, func: m => alert(m), args: [msg]
+  }).catch(() => {});
+};
 
 // Returns false if the tab went away (closed or navigated) rather than throwing
 // an uncaught rejection, which is what produced the "No tab with id" error.
 const ask = async (tabId, msg) => {
+  await inject(tabId, hideToast);
   try {
     const [hit] = await chrome.scripting.executeScript({
       target: { tabId }, func: m => confirm(m), args: [msg]
@@ -889,6 +910,27 @@ function goTo(tabId, url) {
 }
 
 // --- injected into the page (default, isolated world) ----------------------
+
+// A small "working" note pinned to the top of the page. Not an alert: an alert
+// would freeze the very page we're waiting on. Gone on its own when the tab
+// moves to another page, and replaced by the Start or finish popup.
+function showToast(msg) {
+  let el = document.getElementById("cvdl-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "cvdl-toast";
+    el.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);" +
+      "z-index:2147483647;background:#1f2937;color:#fff;padding:12px 18px;border-radius:8px;" +
+      "font:15px/1.4 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+}
+
+function hideToast() {
+  const el = document.getElementById("cvdl-toast");
+  if (el) el.remove();
+}
 
 // The jobs table only renders a handful of rows at a time, so scroll to the
 // bottom collecting job links as they appear. Same as v2's Indeed downloader.
