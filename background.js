@@ -159,6 +159,7 @@ async function runAllJobs(tabId, folders, ledger) {
   // all of a run's time went (measured 2026-08-21: 11 minutes, 38 new CVs).
   // Declared here, above the confirm dialog that reads it.
   const unchanged = j => j.candidates > 0 && ledger.jobCounts[j.jobId] === j.candidates;
+  const nameOf = jobNamer(jobs);   // for the popup; folders are still found by title
 
   // The start popup is subject to the same fixed alert height as the finish one,
   // so the counts that only matter for diagnosis go to the console instead.
@@ -191,7 +192,7 @@ async function runAllJobs(tabId, folders, ledger) {
     chrome.action.setBadgeText({ text: `${i + 1}/${jobs.length}` });
 
     if (unchanged(job)) {
-      untouched.push(job.title);
+      untouched.push(nameOf(job));
       continue;
     }
 
@@ -205,8 +206,8 @@ async function runAllJobs(tabId, folders, ledger) {
     if (!r.sortOk && r.total > 0) badSort.push(job.title);
     toDrive += r.uploaded;
     toDownloads += r.savedLocal;
-    if (r.uploaded + r.savedLocal > 0) saved.push(`${job.title}: ${r.uploaded + r.savedLocal}`);
-    detail.push(`${job.title}: ${r.uploaded} to Drive` +
+    if (r.uploaded + r.savedLocal > 0) saved.push(`${nameOf(job)}: ${r.uploaded + r.savedLocal}`);
+    detail.push(`${nameOf(job)}: ${r.uploaded} to Drive` +
       (r.savedLocal ? `, ${r.savedLocal} to Downloads` : "") +
       (r.missed.length ? `, ${r.missed.length} no resume` : "") +
       (r.stoppedEarly ? ` [read ${r.total}, stopped — rest already had]` : ""));
@@ -259,6 +260,31 @@ const noFolderWarning = titles => titles.length
   : "";
 
 const jobsPhrase = n => `${n} job${n === 1 ? "" : "s"}`;
+// Several open jobs can share a title, and a popup listing the same title
+// twice answers nothing. Where a title repeats, add whatever differs between
+// those rows on the Jobs page — the location, the candidate count — and leave
+// out what they have in common: two "Sales Development Representative" jobs,
+// both Remote, both posted the same day, become "(26 candidates)" and "(22
+// candidates)", the numbers you'd look for on the page. A title nobody else
+// has stays as it is.
+const jobNamer = jobs => {
+  const byTitle = {};
+  for (const j of jobs) (byTitle[j.title] = byTitle[j.title] || []).push(j);
+  const parts = j => ({
+    location: j.location || null,
+    candidates: `${j.candidates || 0} candidate${j.candidates === 1 ? "" : "s"}`
+  });
+  return job => {
+    const twins = byTitle[job.title] || [];
+    if (twins.length < 2) return job.title;
+    const mine = parts(job);
+    const extra = Object.keys(mine)
+      .filter(k => mine[k] && new Set(twins.map(t => parts(t)[k])).size > 1)
+      .map(k => mine[k]);
+    return extra.length ? `${job.title} (${extra.join(", ")})` : job.title;
+  };
+};
+
 const cvsPhrase = n => `${n} new CV${n === 1 ? "" : "s"}`;
 const peoplePhrase = n => `${n} ${n === 1 ? "person" : "people"}`;
 
@@ -883,7 +909,13 @@ async function collectJobs() {
       if (id && !found.has(id)) {
         const row = a.closest("tr");
         const count = row && row.querySelector('[data-testid="candidates-pipeline-hosted-all-count"]');
-        found.set(id, { title: (a.innerText || "").trim(), candidates: count ? Number((count.innerText || "").trim()) || 0 : 0 });
+        const title = (a.innerText || "").trim();
+        // The line under the title in its own cell: "Remote". Only used to tell
+        // apart two open jobs that share a title.
+        const lines = ((a.closest("td") || {}).innerText || "").split("\n").map(l => l.trim()).filter(Boolean);
+        const at = lines.indexOf(title);
+        const location = at >= 0 ? lines[at + 1] || null : null;
+        found.set(id, { title, candidates: count ? Number((count.innerText || "").trim()) || 0 : 0, location });
       }
     });
     if (expected && found.size >= expected) break;
@@ -892,7 +924,7 @@ async function collectJobs() {
     await sleep(600);
     if (window.scrollY <= before + 2 && i > 2) break;
   }
-  return [...found].map(([jobId, j]) => ({ jobId, title: j.title, candidates: j.candidates }));
+  return [...found].map(([jobId, j]) => ({ jobId, title: j.title, candidates: j.candidates, location: j.location }));
 }
 
 // No heading element holds the job title cleanly on the candidate list, but the

@@ -344,6 +344,26 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   assert.ok(ledgerNow().keys.includes("lap1"), "and only then is it marked done");
   console.log("ok    no folder: saved to this computer, warned first, sent to Drive once the folder exists");
 
+  // 8. two open jobs with the same title. A popup listing "Sales Development
+  // Representative" twice says nothing about which, so where a title repeats
+  // it carries whatever differs between those rows on the Jobs page, and
+  // leaves out what they share. The SDR pair is the real one from 2026-09-23:
+  // both Remote, so only the candidate counts tell them apart.
+  JOBS.length = 0;
+  JOBS.push({ jobId: "sdr-a", title: "Sales Development Representative", candidates: 26, location: "Remote" },
+            { jobId: "sdr-b", title: "Sales Development Representative", candidates: 22, location: "Remote" },
+            { jobId: "pc-a", title: "Project Coordinator", candidates: 5, location: "Remote" },
+            { jobId: "pc-b", title: "Project Coordinator", candidates: 7, location: "Bogotá" });
+  const bank = ledgerNow();
+  bank.jobCounts = { ...bank.jobCounts, "sdr-a": 26, "sdr-b": 22, "pc-a": 5, "pc-b": 7 };   // all skipped
+  state.driveFiles["_cv-downloader-ledger-indeed.json"] = JSON.stringify(bank);
+  const twins = await sweep();
+  assert.ok(twins.includes("No new applicants: " +
+    "Sales Development Representative (26 candidates), Sales Development Representative (22 candidates), " +
+    "Project Coordinator (Remote, 5 candidates), Project Coordinator (Bogotá, 7 candidates)."),
+    "repeated titles carry only what differs:\n" + twins);
+  console.log("ok    jobs that share a title are told apart by what differs between them");
+
   console.log("\nsmoke test passed — a full sweep runs end to end");
 })().catch(err => {
   console.error("\nSMOKE TEST FAILED:", err.message);
