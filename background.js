@@ -200,6 +200,7 @@ async function runAllJobs(tabId, folders, ledger) {
   const unmatched = [];
   const retired = [];
   const untouched = [];
+  const unread = [];   // had candidates, but their list never loaded
   const badSort = [];
   let toDrive = 0;
   let toDownloads = 0;
@@ -218,7 +219,18 @@ async function runAllJobs(tabId, folders, ledger) {
     if (!folderId) unmatched.push(job.title);
 
     await goTo(tabId, candidatesUrl(job.jobId));
-    const r = await walkJobCandidates(tabId, folderId, job.title, ledger, job.jobId);
+    let r = await walkJobCandidates(tabId, folderId, job.title, ledger, job.jobId);
+
+    // An empty candidate list on a job that has candidates means the list never
+    // loaded, not that there was nobody. It used to pass in silence: a
+    // 62-candidate job gave nothing on 2026-09-26 and the popup never said so.
+    // Rest, reload, and look once more before believing it.
+    if (r.total === 0 && job.candidates > 0) {
+      await new Promise(res => setTimeout(res, 30000));
+      await goTo(tabId, candidatesUrl(job.jobId));
+      r = await walkJobCandidates(tabId, folderId, job.title, ledger, job.jobId);
+      if (r.total === 0) unread.push(nameOf(job));
+    }
     retired.push(...r.retired.map(n => `${n} (${job.title})`));
     if (!r.sortOk && r.total > 0) badSort.push(job.title);
     toDrive += r.uploaded;
@@ -249,6 +261,10 @@ async function runAllJobs(tabId, folders, ledger) {
     `Done — ${cvsPhrase(toDrive)} saved to Drive.` +
     (toDownloads ? `\n${toDownloads} went to the Downloads folder instead.` : "") +
     (saved.length ? `\n\n${capped(saved).join("\n")}` : "") +
+    (unread.length
+      ? `\n\nCouldn't read: ${capped(unread, 4).join(", ")} — the candidate list never loaded. ` +
+        `It'll be checked again next run.`
+      : "") +
     (untouched.length ? `\n\nNo new applicants: ${capped(untouched, 4).join(", ")}.` : "") +
     (badSort.length
       ? `\n\nTip: sort ${jobsPhrase(badSort.length)} by "Apply date (newest first)" to make runs much faster.`

@@ -10,6 +10,11 @@ const assert = require("assert");
 
 const src = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
 
+// Real waits (a 30s rest before re-reading a list) would make this take
+// minutes of pure waiting.
+const realSetTimeout = global.setTimeout;
+global.setTimeout = (fn, ms) => realSetTimeout(fn, ms > 1 ? 1 : ms);
+
 // --- the world the service worker thinks it lives in ------------------------
 const state = {
   clickHandler: null,
@@ -82,7 +87,13 @@ const chrome = {
       if (name === "collectJobs") { state.jobListReads = (state.jobListReads || 0) + 1; return [{ result: JOBS }]; }
       if (name === "showToast") { (state.toasts = state.toasts || []).push(args[0]); return [{ result: true }]; }
       if (name === "hideToast") return [{ result: true }];
-      if (name === "collectCandidates") { state.knownIdsSeen = args[0] || []; return [{ result: { list: state.candidateList || CANDIDATES, stoppedEarly: false, sortOk: true } }]; }
+      if (name === "collectCandidates") {
+        state.knownIdsSeen = args[0] || [];
+        // A queue lets one job's list come back empty first, as a slow page does.
+        const list = state.scanQueue && state.scanQueue.length ? state.scanQueue.shift()
+          : (state.candidateList || CANDIDATES);
+        return [{ result: { list, stoppedEarly: false, sortOk: true } }];
+      }
       if (name === "readJobTitle") return [{ result: "Sales Account Manager" }];
       if (name === "waitAndCaptureResume") {
         // "No Resume Person" never yields a PDF, everyone else does.
@@ -408,6 +419,27 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   await state.clickHandler(jobsTab);
   assert.strictEqual(state.jobListReads, 2, "once that run has finished, a click starts one again");
   console.log("ok    a click shows a note at once, and a second click can't start a second run");
+
+  // 10. a candidate list that never loads. On 2026-09-26 a 62-candidate job
+  // gave nothing and the popup never said so. An empty list on a job that has
+  // candidates gets a second look; if that's empty too, the popup names it and
+  // the job stays in the queue.
+  const lateList = [{ id: "late1", name: "Late Loader", href: "https://employers.indeed.com/candidates/view?id=late1" }];
+  JOBS.length = 0;
+  JOBS.push({ jobId: "late", title: "Project Coordinator", candidates: 3, location: "Remote" });
+  state.scanQueue = [[], lateList];
+  const uploadsBeforeLate = state.uploaded.length;
+  const lateFinish = await sweep();
+  assert.ok(state.uploaded.length > uploadsBeforeLate, "a list that loads on the second look is read");
+  assert.ok(!lateFinish.includes("Couldn't read"), "and isn't reported:\n" + lateFinish);
+
+  JOBS[0] = { jobId: "never", title: "Project Coordinator", candidates: 4, location: "Remote" };
+  state.scanQueue = [[], []];
+  const neverFinish = await sweep();
+  assert.ok(neverFinish.includes("Couldn't read: Project Coordinator — the candidate list never loaded"),
+    "a list that never loads is named in the popup:\n" + neverFinish);
+  assert.strictEqual(ledgerNow().jobCounts.never, undefined, "and the job isn't marked done");
+  console.log("ok    a candidate list that doesn't load gets a second look, and is reported if it never does");
 
   console.log("\nsmoke test passed — a full sweep runs end to end");
 })().catch(err => {
