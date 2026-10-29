@@ -135,7 +135,7 @@ global.fetch = async (url, opts = {}) => {
   if (url.includes("/upload/drive/v3/files")) {
     // The PDF upload sends a Blob (binary); the ledger and CSV send strings.
     if (typeof Blob !== "undefined" && opts.body instanceof Blob) {
-      state.uploaded.push("pdf");
+      state.uploaded.push("pdf"); (state.pdfMeta ||= []).push(await opts.body.text());
       return ok({ id: "new-pdf" });
     }
     // Decided by the address, as Drive does. Sniffing the body for "name" mistook
@@ -320,6 +320,8 @@ assert.ok(state.clickHandler, "background.js never registered the toolbar click 
   assert.ok(state.navigated.some(u => u.includes("id=new1")), "new candidate should be opened");
   assert.ok(state.uploaded.length >= 1, "a PDF should have been uploaded");
   console.log("ok    new candidate's CV is fetched and uploaded");
+  assert.ok(/"indeedUrl":"[^"]*new1/.test(state.pdfMeta[0]), "the CV should carry the candidate's Indeed link: " + state.pdfMeta[0].slice(0, 300));
+  console.log("ok    the CV carries the candidate's Indeed link (appProperties.indeedUrl)");
 
   // 4. the no-CV candidate got a strike, not a retirement, on the first miss
   const ledger = JSON.parse(state.driveFiles["_cv-downloader-ledger-indeed.json"]);

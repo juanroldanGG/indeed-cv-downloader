@@ -411,7 +411,7 @@ async function walkJobCandidates(tabId, folderId, jobTitle, ledger, jobId) {
     const capture = await inject(tabId, waitAndCaptureResume, [], "MAIN");
     if (capture && capture.base64) {
       const filename = `${safeName(c.name) || "resume"}.pdf`;
-      const ok = folderId ? await uploadBase64ToDrive(capture.base64, filename, folderId) : false;
+      const ok = folderId ? await uploadBase64ToDrive(capture.base64, filename, folderId, c.href) : false;
 
       if (ok) {
         uploaded++;
@@ -750,11 +750,13 @@ async function getOrCreateChild(parentId, name) {
 }
 
 // Decodes the base64 the page captured and multipart-uploads it into the folder.
-async function uploadBase64ToDrive(base64, filename, folderId) {
+// The candidate's Indeed page link rides along as appProperties.indeedUrl.
+async function uploadBase64ToDrive(base64, filename, folderId, profileUrl) {
   try {
     const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
     const boundary = "cvdl" + folderId.slice(0, 8) + filename.length;
-    const meta = JSON.stringify({ name: filename, parents: [folderId] });
+    const meta = JSON.stringify({ name: filename, parents: [folderId],
+      ...(profileUrl && { appProperties: { indeedUrl: profileUrl } }) });
     const body = new Blob([
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`,
       `--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`,

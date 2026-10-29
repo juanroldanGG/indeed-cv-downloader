@@ -212,6 +212,11 @@ GroundControl's MD5 dedup trashes the second copy.
 Before 3.5 those CVs were recorded as done, which stranded them on whichever
 laptop ran it.
 
+## Since 3.10: candidate link on each CV
+
+Every CV carries the candidate's Indeed page address in the Drive file's `appProperties`,
+key `indeedUrl`. It needs an Indeed employer login to open. The shared ledger is unchanged.
+
 ## What happens after upload (GroundControl)
 
 CVs don't keep the name this extension gave them. GroundControl
